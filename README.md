@@ -1,4 +1,4 @@
-# ESA Policy Hitcount MCP Server (Stage 2)
+# ESA (CES) Policy Hitcount MCP Server (Stage 2)
 
 Stage 2 provides an MCP-based workflow for ESA policy analysis with AI/NLP conversational investigation.
 
