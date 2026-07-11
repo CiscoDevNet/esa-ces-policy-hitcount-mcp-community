@@ -1,0 +1,29 @@
+{
+  "reportDate": "2026-07-07",
+  "queryPeriod": "30 Days",
+  "incomingPolicies": [
+    {
+      "order": 1,
+      "name": "kv",
+      "hits": 13816
+    },
+    {
+      "order": 2,
+      "name": "incident",
+      "hits": 0
+    }
+  ],
+  "outgoingPolicies": [
+    {
+      "order": 1,
+      "name": "gmail-out",
+      "hits": 520
+    },
+    {
+      "order": 2,
+      "name": "6digit",
+      "hits": 0
+    }
+  ],
+  "purposeText": "This report analyses mail policy hit counts to identify active, low-traffic, and inactive policies for ESA policy housekeeping."
+}
