@@ -1,0 +1,32 @@
+# Python virtual environment
+env/
+.venv/
+venv/
+
+# Python cache/build artifacts
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+
+# Local secrets/config
+.env.*
+!.env.example
+!.env
+
+# Node artifacts
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# OS/editor files
+.DS_Store
+.vscode/
+
+# Generated artifacts and logs
+*.log
+*.tmp
+
