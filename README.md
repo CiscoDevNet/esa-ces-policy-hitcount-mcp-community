@@ -1,5 +1,30 @@
 # ESA (CES) Policy Hitcount MCP Server (Stage 2)
 
+## Before You Start: Stage 1 vs Stage 2
+
+This repository is part of a two-stage workflow for ESA policy health analysis.
+
+- Stage 1 (script-only baseline):
+  - Reference: https://github.com/CiscoDevNet/ESA-Policy-Hitcount
+  - Purpose: run direct scripts to fetch policy hit counts and compare against policy inventory.
+  - Best for: operators who want a straightforward CLI/script workflow with minimal orchestration.
+
+- Stage 2 (this repository):
+  - Purpose: expose the same core analysis through MCP tools so AI assistants and MCP clients can run interactive, conversational investigations.
+  - Best for: guided investigations, context-aware follow-up questions, and easier workflow automation.
+
+If you are new to this solution, review Stage 1 first for baseline logic, then continue here for the MCP-enabled Stage 2 workflow.
+
+### Quick Decision Guide
+
+| If your goal is... | Use | Why |
+|---|---|---|
+| Run a simple one-off hitcount check from CLI scripts | Stage 1 | Minimal setup and direct script execution |
+| Compare config inventory vs hits without MCP clients | Stage 1 | Straightforward script-driven workflow |
+| Ask conversational follow-up questions about policy activity | Stage 2 | MCP tools enable AI-guided investigation |
+| Build repeatable AI-assisted operations workflows | Stage 2 | Tool orchestration and context retention across steps |
+| Generate richer summaries and guided action recommendations | Stage 2 | Better interactive analysis over the same core data |
+
 Stage 2 provides an MCP-based workflow for ESA policy analysis with AI/NLP conversational investigation.
 
 This Stage 2 workflow supports both ESA and CES deployments.
