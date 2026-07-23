@@ -34,6 +34,11 @@ async def run_client(
     days_to_query: int,
     top_n_policies: int,
     config_file_path: str | None,
+    fetch_via_ssh: bool,
+    ssh_host: str | None,
+    ssh_user: str | None,
+    ssh_pass: str | None,
+    ssh_port: int | None,
     output_json: str | None,
 ):
     async with streamablehttp_client(
@@ -56,18 +61,32 @@ async def run_client(
                 return
 
             if mode == "compare-config":
-                if not config_file_path:
-                    raise ValueError("--config-file is required when --mode compare-config")
+                if not config_file_path and not fetch_via_ssh:
+                    raise ValueError(
+                        "--mode compare-config requires either --config-file or --fetch-via-ssh"
+                    )
+
+                params = {
+                    "days_to_query": days_to_query,
+                    "top_n_policies_for_comparison": top_n_policies,
+                }
+
+                if config_file_path:
+                    params["config_file_path"] = config_file_path
+                if fetch_via_ssh:
+                    params["fetch_via_ssh"] = True
+                if ssh_host:
+                    params["ssh_host"] = ssh_host
+                if ssh_user:
+                    params["ssh_user"] = ssh_user
+                if ssh_pass:
+                    params["ssh_pass"] = ssh_pass
+                if ssh_port is not None:
+                    params["ssh_port"] = ssh_port
 
                 result = await session.call_tool(
                     "compare_config_to_hit_counts_tool",
-                    {
-                        "params": {
-                            "days_to_query": days_to_query,
-                            "top_n_policies_for_comparison": top_n_policies,
-                            "config_file_path": config_file_path,
-                        }
-                    }
+                    {"params": params}
                 )
                 print(result)
                 if output_json:
@@ -95,7 +114,7 @@ def parse_args():
         "--mode",
         choices=["run", "list-tools", "compare-config"],
         default="run",
-        help="run: call get_policy_hit_count_tool, list-tools: display available MCP tools, compare-config: find zero-hit policies from ESA config (XML export expected for --config-file)",
+        help="run: call get_policy_hit_count_tool, list-tools: display available MCP tools, compare-config: find zero-hit policies via XML config or SSH policyconfig inventory",
     )
     parser.add_argument(
         "--url",
@@ -107,7 +126,33 @@ def parse_args():
     parser.add_argument(
         "--config-file",
         default=None,
-        help="Path to ESA XML config export file (required for --mode compare-config)",
+        help="Path to ESA XML config export file (optional for --mode compare-config; use --fetch-via-ssh instead)",
+    )
+    parser.add_argument(
+        "--fetch-via-ssh",
+        action="store_true",
+        help="For --mode compare-config, fetch policy inventory from ESA/CES CLI policyconfig over SSH",
+    )
+    parser.add_argument(
+        "--ssh-host",
+        default=None,
+        help="Optional SSH host override for --fetch-via-ssh",
+    )
+    parser.add_argument(
+        "--ssh-user",
+        default=None,
+        help="Optional SSH username override for --fetch-via-ssh",
+    )
+    parser.add_argument(
+        "--ssh-pass",
+        default=None,
+        help="Optional SSH password override for --fetch-via-ssh",
+    )
+    parser.add_argument(
+        "--ssh-port",
+        type=int,
+        default=None,
+        help="Optional SSH port override for --fetch-via-ssh",
     )
     parser.add_argument(
         "--output-json",
@@ -119,4 +164,18 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-    asyncio.run(run_client(args.mode, args.url, args.days, args.top, args.config_file, args.output_json))
+    asyncio.run(
+        run_client(
+            args.mode,
+            args.url,
+            args.days,
+            args.top,
+            args.config_file,
+            args.fetch_via_ssh,
+            args.ssh_host,
+            args.ssh_user,
+            args.ssh_pass,
+            args.ssh_port,
+            args.output_json,
+        )
+    )

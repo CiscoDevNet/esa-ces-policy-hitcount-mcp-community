@@ -150,6 +150,15 @@ def fetch_policyconfig_via_ssh(ssh_host: str, ssh_user: str, ssh_pass: str, ssh_
         lowered = text.lower()
         return any(needle.lower() in lowered for needle in needles)
 
+    def _is_cluster_mode_prompt(text: str) -> bool:
+        return _contains_any(
+            text,
+            (
+                "what would you like to do?",
+                "not yet been configured for the current cluster mode",
+            ),
+        )
+
     def _open_policyconfig_menu(shell) -> str:
         """Open policyconfig and wait for top-level policy selection prompt."""
         last_output = ""
@@ -181,7 +190,9 @@ def fetch_policyconfig_via_ssh(ssh_host: str, ssh_user: str, ssh_pass: str, ssh_
             ):
                 return output
 
-            return output
+            # If we reached the cluster prompt, return so caller can switch modes.
+            if _is_cluster_mode_prompt(output):
+                return output
 
         return last_output
 
@@ -200,7 +211,29 @@ def fetch_policyconfig_via_ssh(ssh_host: str, ssh_user: str, ssh_pass: str, ssh_
 
         sections = {}
         for choice, label in (("1", "incoming"), ("2", "outgoing")):
-            _open_policyconfig_menu(shell)
+            menu_output = _open_policyconfig_menu(shell)
+
+            # Some ESA/CES deployments present cluster-mode prompt immediately.
+            if _is_cluster_mode_prompt(menu_output):
+                shell.send(b"1\n")
+                menu_output = read_ssh_until(
+                    shell,
+                    (
+                        "Choose the operation you want to perform:",
+                        "Incoming Mail Policy Configuration",
+                        "Outgoing Mail Policy Configuration",
+                        "Would you like to configure Incoming Mail Policy",
+                        "Would you like to configure Incoming Mail Policies",
+                        "What would you like to do?",
+                    ),
+                    timeout_seconds=20,
+                )
+
+                if _is_cluster_mode_prompt(menu_output):
+                    raise RuntimeError(
+                        "Unable to switch policyconfig into cluster mode automatically. "
+                        "Run policyconfig once manually and initialize cluster mode, then retry."
+                    )
 
             shell.send(f"{choice}\n".encode())
             section_output = read_ssh_until(
@@ -209,20 +242,14 @@ def fetch_policyconfig_via_ssh(ssh_host: str, ssh_user: str, ssh_pass: str, ssh_
                     "NOTICE: This configuration command has not yet been configured for the current cluster mode",
                     "What would you like to do?",
                     "Choose the operation you want to perform:",
-                    "[]>",
-                    "[1]>",
+                    "Incoming Mail Policy Configuration",
+                    "Outgoing Mail Policy Configuration",
                 ),
                 timeout_seconds=12,
             )
 
             # In cluster mode, prompt appears after selecting incoming/outgoing policy config.
-            if _contains_any(
-                section_output,
-                (
-                    "what would you like to do?",
-                    "not yet been configured for the current cluster mode",
-                ),
-            ):
+            if _is_cluster_mode_prompt(section_output):
                 shell.send(b"1\n")
                 cluster_switched_output = read_ssh_until(
                     shell,
@@ -230,14 +257,16 @@ def fetch_policyconfig_via_ssh(ssh_host: str, ssh_user: str, ssh_pass: str, ssh_
                         "Choose the operation you want to perform:",
                         "Incoming Mail Policy Configuration",
                         "Outgoing Mail Policy Configuration",
-                        "[]>",
+                        "Would you like to configure Incoming Mail Policy",
+                        "Would you like to configure Incoming Mail Policies",
+                        "What would you like to do?",
                     ),
                     timeout_seconds=20,
                 )
                 section_output = section_output + "\n" + cluster_switched_output
 
                 # If prompt still remains after selecting switch, fail with clear guidance.
-                if _contains_any(cluster_switched_output, ("what would you like to do?",)):
+                if _is_cluster_mode_prompt(cluster_switched_output):
                     raise RuntimeError(
                         "Unable to switch policyconfig into cluster mode automatically. "
                         "Run policyconfig once manually and initialize cluster mode, then retry."
