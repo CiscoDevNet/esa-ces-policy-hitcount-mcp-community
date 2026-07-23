@@ -63,6 +63,8 @@ Server exposes these MCP tools:
 - `compare_config_to_hit_counts_tool`
   - Inputs: `config_text` or `config_file_path` (ESA XML config export expected for file input)
   - Optional SSH inventory mode: `fetch_via_ssh`, `ssh_host`, `ssh_user`, `ssh_pass`, `ssh_port`
+  - SSH mode behavior: supports both non-cluster and cluster CLI flows; when cluster prompt appears, tool attempts mode switch automatically
+  - SSH mode fallback: if cluster mode cannot be switched automatically, initialize `policyconfig` once manually in CLI and retry
   - Returns: `policies_with_hits`, `policies_without_hits`, summary counts
 - `explain_top_policy_hits_tool`
   - Inputs: `days_to_query`, `top_n_policies`, `compare_with_previous_period`
@@ -132,6 +134,10 @@ Default endpoint:
 ### A) Backend Smoke Test (CLI)
 
 Use this path to verify server health and ESA connectivity only.
+
+Note:
+- `mcp-client.py --mode compare-config` requires `--config-file` (ESA XML config export).
+- SSH inventory mode (`fetch_via_ssh=true`) is available via direct MCP tool calls in MCP-capable clients/workflows.
 
 In another terminal:
 

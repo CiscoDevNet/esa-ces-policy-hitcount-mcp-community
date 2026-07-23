@@ -1,8 +1,7 @@
+#!/usr/bin/env python3
 # Copyright 2026 Cisco Systems, Inc. and its affiliates
 # 
 # SPDX-License-Identifier: Apache-2.0  
-
-#!/usr/bin/env python3
 
 """
 ESA Policy Hitcount MCP Server
@@ -147,6 +146,45 @@ def fetch_policyconfig_via_ssh(ssh_host: str, ssh_user: str, ssh_pass: str, ssh_
     client = paramiko.SSHClient()
     client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
 
+    def _contains_any(text: str, needles: tuple[str, ...]) -> bool:
+        lowered = text.lower()
+        return any(needle.lower() in lowered for needle in needles)
+
+    def _open_policyconfig_menu(shell) -> str:
+        """Open policyconfig and wait for top-level policy selection prompt."""
+        last_output = ""
+        for _ in range(3):
+            shell.send(b"policyconfig\n")
+            output = read_ssh_until(
+                shell,
+                (
+                    "Would you like to configure Incoming Mail Policy",
+                    "Would you like to configure Incoming Mail Policies",
+                    "Choose the operation you want to perform:",
+                    "Incoming Mail Policy Configuration",
+                    "Outgoing Mail Policy Configuration",
+                    "[1]>",
+                ),
+                timeout_seconds=12,
+            )
+            last_output = output
+
+            # Non-cluster behavior may jump directly into operation/config screens.
+            if _contains_any(
+                output,
+                (
+                    "choose the operation you want to perform:",
+                    "incoming mail policy configuration",
+                    "outgoing mail policy configuration",
+                    "would you like to configure incoming mail policy",
+                ),
+            ):
+                return output
+
+            return output
+
+        return last_output
+
     try:
         client.connect(
             hostname=ssh_host,
@@ -162,10 +200,64 @@ def fetch_policyconfig_via_ssh(ssh_host: str, ssh_user: str, ssh_pass: str, ssh_
 
         sections = {}
         for choice, label in (("1", "incoming"), ("2", "outgoing")):
-            shell.send(b"policyconfig\n")
-            read_ssh_until(shell, ("[1]>", "[2]>", "[3]>"), timeout_seconds=8)
+            _open_policyconfig_menu(shell)
+
             shell.send(f"{choice}\n".encode())
-            sections[label] = read_ssh_until(shell, ("[]>",), timeout_seconds=12)
+            section_output = read_ssh_until(
+                shell,
+                (
+                    "NOTICE: This configuration command has not yet been configured for the current cluster mode",
+                    "What would you like to do?",
+                    "Choose the operation you want to perform:",
+                    "[]>",
+                    "[1]>",
+                ),
+                timeout_seconds=12,
+            )
+
+            # In cluster mode, prompt appears after selecting incoming/outgoing policy config.
+            if _contains_any(
+                section_output,
+                (
+                    "what would you like to do?",
+                    "not yet been configured for the current cluster mode",
+                ),
+            ):
+                shell.send(b"1\n")
+                cluster_switched_output = read_ssh_until(
+                    shell,
+                    (
+                        "Choose the operation you want to perform:",
+                        "Incoming Mail Policy Configuration",
+                        "Outgoing Mail Policy Configuration",
+                        "[]>",
+                    ),
+                    timeout_seconds=20,
+                )
+                section_output = section_output + "\n" + cluster_switched_output
+
+                # If prompt still remains after selecting switch, fail with clear guidance.
+                if _contains_any(cluster_switched_output, ("what would you like to do?",)):
+                    raise RuntimeError(
+                        "Unable to switch policyconfig into cluster mode automatically. "
+                        "Run policyconfig once manually and initialize cluster mode, then retry."
+                    )
+
+            # For either deployment mode, ensure we captured a policy section before returning.
+            if not _contains_any(
+                section_output,
+                (
+                    "choose the operation you want to perform:",
+                    "incoming mail policy configuration",
+                    "outgoing mail policy configuration",
+                ),
+            ):
+                raise RuntimeError(
+                    "Unable to capture policyconfig section output for "
+                    f"{label} policies. Check SSH role/CLI access and retry."
+                )
+
+            sections[label] = section_output
             shell.send(b"\n")
             read_ssh_until(shell, (">", "#"), timeout_seconds=8)
 
