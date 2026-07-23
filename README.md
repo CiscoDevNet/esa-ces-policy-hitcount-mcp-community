@@ -62,8 +62,9 @@ Server exposes these MCP tools:
   - Returns: incoming/outgoing policy hit lists with counts
 - `compare_config_to_hit_counts_tool`
   - Inputs: `config_text` or `config_file_path` (ESA XML config export expected for file input)
-  - Optional SSH inventory mode: `fetch_via_ssh`, `ssh_host`, `ssh_user`, `ssh_pass`, `ssh_port`
+  - Optional SSH inventory mode: `fetch_via_ssh`, `ssh_host`, `ssh_user`, `ssh_pass`, `ssh_port`, `ssh_attempts`
   - SSH mode behavior: supports both non-cluster and cluster CLI flows; when cluster prompt appears, tool attempts mode switch automatically
+  - SSH reliability tuning: `ssh_attempts` defaults to `5` (range `1-5`) and selects the most complete snapshot across attempts
   - SSH mode fallback: if cluster mode cannot be switched automatically, initialize `policyconfig` once manually in CLI and retry
   - Returns: `policies_with_hits`, `policies_without_hits`, summary counts
 - `explain_top_policy_hits_tool`
@@ -146,6 +147,7 @@ python3 mcp-client.py --mode list-tools
 python3 mcp-client.py --mode run --days 1 --top 5
 python3 mcp-client.py --mode compare-config --days 30 --top 1000 --config-file /path/to/esa-config.xml
 python3 mcp-client.py --mode compare-config --days 30 --top 1000 --config-file /path/to/esa-config.xml --output-json compare-config-output.json
+python3 mcp-client.py --mode compare-config --days 30 --top 1000 --fetch-via-ssh --ssh-host <ESA-IP> --ssh-user <USER> --ssh-pass <PASS> --ssh-attempts 5 --output-json compare-config-output.json
 ```
 
 ### B) AI Conversational Workflow (Primary)
@@ -260,6 +262,9 @@ python3 mcp-client.py --url http://127.0.0.1:8080/mcp --mode run --days 30 --top
 
 # Compare ESA XML inventory vs 30-day hits
 python3 mcp-client.py --url http://127.0.0.1:8080/mcp --mode compare-config --days 30 --top 1000 --config-file /path/to/esa-config.xml --output-json compare-config-output.json
+
+# Compare using SSH policy inventory with reliability retries
+python3 mcp-client.py --url http://127.0.0.1:8080/mcp --mode compare-config --days 30 --top 1000 --fetch-via-ssh --ssh-host <ESA-IP> --ssh-user <USER> --ssh-pass <PASS> --ssh-attempts 5 --output-json compare-config-output.json
 ```
 
 ## Stage 2 Workflow Details (Both Paths)

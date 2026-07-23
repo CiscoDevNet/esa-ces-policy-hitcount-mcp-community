@@ -159,6 +159,53 @@ def fetch_policyconfig_via_ssh(ssh_host: str, ssh_user: str, ssh_pass: str, ssh_
             ),
         )
 
+    def _is_policyconfig_ready(text: str) -> bool:
+        return _contains_any(
+            text,
+            (
+                "choose the operation you want to perform:",
+                "incoming mail policy configuration",
+                "outgoing mail policy configuration",
+                "would you like to configure incoming mail policy",
+                "would you like to configure incoming mail policies",
+            ),
+        )
+
+    def _resolve_cluster_mode_prompt(shell, initial_output: str) -> str:
+        """Attempt to clear cluster-mode prompts without manual CLI intervention."""
+        output = initial_output
+        if not _is_cluster_mode_prompt(output):
+            return output
+
+        # Different ESA/CES versions may map cluster menu options differently.
+        for selection in ("1", "2", "3"):
+            shell.send(f"{selection}\n".encode())
+            follow_up = read_ssh_until(
+                shell,
+                (
+                    "Choose the operation you want to perform:",
+                    "Incoming Mail Policy Configuration",
+                    "Outgoing Mail Policy Configuration",
+                    "Would you like to configure Incoming Mail Policy",
+                    "Would you like to configure Incoming Mail Policies",
+                    "What would you like to do?",
+                    "NOTICE: This configuration command has not yet been configured for the current cluster mode",
+                ),
+                timeout_seconds=20,
+            )
+            output = output + "\n" + follow_up
+
+            if _is_policyconfig_ready(follow_up):
+                return output
+
+            if not _is_cluster_mode_prompt(follow_up):
+                return output
+
+        raise RuntimeError(
+            "Unable to switch policyconfig into cluster mode automatically after trying multiple menu options. "
+            "Run policyconfig once manually and initialize cluster mode, then retry."
+        )
+
     def _open_policyconfig_menu(shell) -> str:
         """Open policyconfig and wait for top-level policy selection prompt."""
         last_output = ""
@@ -179,15 +226,7 @@ def fetch_policyconfig_via_ssh(ssh_host: str, ssh_user: str, ssh_pass: str, ssh_
             last_output = output
 
             # Non-cluster behavior may jump directly into operation/config screens.
-            if _contains_any(
-                output,
-                (
-                    "choose the operation you want to perform:",
-                    "incoming mail policy configuration",
-                    "outgoing mail policy configuration",
-                    "would you like to configure incoming mail policy",
-                ),
-            ):
+            if _is_policyconfig_ready(output):
                 return output
 
             # If we reached the cluster prompt, return so caller can switch modes.
@@ -215,25 +254,7 @@ def fetch_policyconfig_via_ssh(ssh_host: str, ssh_user: str, ssh_pass: str, ssh_
 
             # Some ESA/CES deployments present cluster-mode prompt immediately.
             if _is_cluster_mode_prompt(menu_output):
-                shell.send(b"1\n")
-                menu_output = read_ssh_until(
-                    shell,
-                    (
-                        "Choose the operation you want to perform:",
-                        "Incoming Mail Policy Configuration",
-                        "Outgoing Mail Policy Configuration",
-                        "Would you like to configure Incoming Mail Policy",
-                        "Would you like to configure Incoming Mail Policies",
-                        "What would you like to do?",
-                    ),
-                    timeout_seconds=20,
-                )
-
-                if _is_cluster_mode_prompt(menu_output):
-                    raise RuntimeError(
-                        "Unable to switch policyconfig into cluster mode automatically. "
-                        "Run policyconfig once manually and initialize cluster mode, then retry."
-                    )
+                menu_output = _resolve_cluster_mode_prompt(shell, menu_output)
 
             shell.send(f"{choice}\n".encode())
             section_output = read_ssh_until(
@@ -250,27 +271,7 @@ def fetch_policyconfig_via_ssh(ssh_host: str, ssh_user: str, ssh_pass: str, ssh_
 
             # In cluster mode, prompt appears after selecting incoming/outgoing policy config.
             if _is_cluster_mode_prompt(section_output):
-                shell.send(b"1\n")
-                cluster_switched_output = read_ssh_until(
-                    shell,
-                    (
-                        "Choose the operation you want to perform:",
-                        "Incoming Mail Policy Configuration",
-                        "Outgoing Mail Policy Configuration",
-                        "Would you like to configure Incoming Mail Policy",
-                        "Would you like to configure Incoming Mail Policies",
-                        "What would you like to do?",
-                    ),
-                    timeout_seconds=20,
-                )
-                section_output = section_output + "\n" + cluster_switched_output
-
-                # If prompt still remains after selecting switch, fail with clear guidance.
-                if _is_cluster_mode_prompt(cluster_switched_output):
-                    raise RuntimeError(
-                        "Unable to switch policyconfig into cluster mode automatically. "
-                        "Run policyconfig once manually and initialize cluster mode, then retry."
-                    )
+                section_output = _resolve_cluster_mode_prompt(shell, section_output)
 
             # For either deployment mode, ensure we captured a policy section before returning.
             if not _contains_any(
@@ -563,21 +564,58 @@ def load_policy_names_from_params(params: dict) -> tuple[list[str], list[str] | 
             raise ValueError(
                 "SSH inventory requires ssh_host, ssh_user, and ssh_pass (directly or via environment variables)."
             )
-        sections = fetch_policyconfig_via_ssh(ssh_host, ssh_user, ssh_pass, ssh_port)
-        incoming_names = extract_policy_names_from_policyconfig_output(sections.get("incoming", ""))
-        outgoing_names = extract_policy_names_from_policyconfig_output(sections.get("outgoing", ""))
+        ssh_attempts = int(params.get("ssh_attempts", 5) or 5)
+        ssh_attempts = max(1, min(ssh_attempts, 5))
 
-        # Track which normalized names appear in both directions.
-        incoming_normalized = {normalize_policy_name(name) for name in incoming_names}
-        outgoing_normalized = {normalize_policy_name(name) for name in outgoing_names}
-        shared = incoming_normalized & outgoing_normalized
+        def _post_process_directional(incoming_names: list[str], outgoing_names: list[str]) -> tuple[list[str], list[str]]:
+            # Normalize default-policy presence. Some CLI renders intermittently omit
+            # one side's DEFAULT row even though both policy trees have one.
+            def _has_default(names: list[str]) -> bool:
+                return any(normalize_policy_name(name).upper() == "DEFAULT" for name in names)
 
-        # Rename policies that appear in both directions to make them distinctive.
-        if shared:
-            incoming_names = [f"{name}-incoming" if normalize_policy_name(name) in shared else name for name in incoming_names]
-            outgoing_names = [f"{name}-outgoing" if normalize_policy_name(name) in shared else name for name in outgoing_names]
+            incoming_processed = list(incoming_names)
+            outgoing_processed = list(outgoing_names)
 
-        return incoming_names + outgoing_names, incoming_names, outgoing_names, "ssh_policyconfig"
+            incoming_has_default = _has_default(incoming_processed)
+            outgoing_has_default = _has_default(outgoing_processed)
+            if incoming_has_default and not outgoing_has_default:
+                outgoing_processed.append("DEFAULT")
+            elif outgoing_has_default and not incoming_has_default:
+                incoming_processed.append("DEFAULT")
+
+            # Track which normalized names appear in both directions.
+            incoming_normalized = {normalize_policy_name(name) for name in incoming_processed}
+            outgoing_normalized = {normalize_policy_name(name) for name in outgoing_processed}
+            shared = incoming_normalized & outgoing_normalized
+
+            # Rename policies that appear in both directions to make them distinctive.
+            if shared:
+                incoming_processed = [f"{name}-incoming" if normalize_policy_name(name) in shared else name for name in incoming_processed]
+                outgoing_processed = [f"{name}-outgoing" if normalize_policy_name(name) in shared else name for name in outgoing_processed]
+
+            return incoming_processed, outgoing_processed
+
+        best_incoming: list[str] = []
+        best_outgoing: list[str] = []
+        best_score = (-1, -1, -1)
+
+        for _ in range(ssh_attempts):
+            sections = fetch_policyconfig_via_ssh(ssh_host, ssh_user, ssh_pass, ssh_port)
+            incoming_raw = extract_policy_names_from_policyconfig_output(sections.get("incoming", ""))
+            outgoing_raw = extract_policy_names_from_policyconfig_output(sections.get("outgoing", ""))
+            incoming_candidate, outgoing_candidate = _post_process_directional(incoming_raw, outgoing_raw)
+
+            unique_total = len({normalize_policy_name(name) for name in (incoming_candidate + outgoing_candidate)})
+            completeness = int(bool(incoming_candidate)) + int(bool(outgoing_candidate))
+            raw_total = len(incoming_candidate) + len(outgoing_candidate)
+            score = (completeness, unique_total, raw_total)
+
+            if score > best_score:
+                best_score = score
+                best_incoming = incoming_candidate
+                best_outgoing = outgoing_candidate
+
+        return best_incoming + best_outgoing, best_incoming, best_outgoing, "ssh_policyconfig"
 
     raise ValueError("Provide one of: config_text, config_file_path, or fetch_via_ssh")
 

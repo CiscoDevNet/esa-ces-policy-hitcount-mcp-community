@@ -39,6 +39,7 @@ async def run_client(
     ssh_user: str | None,
     ssh_pass: str | None,
     ssh_port: int | None,
+    ssh_attempts: int,
     output_json: str | None,
 ):
     async with streamablehttp_client(
@@ -83,6 +84,8 @@ async def run_client(
                     params["ssh_pass"] = ssh_pass
                 if ssh_port is not None:
                     params["ssh_port"] = ssh_port
+                if fetch_via_ssh:
+                    params["ssh_attempts"] = ssh_attempts
 
                 result = await session.call_tool(
                     "compare_config_to_hit_counts_tool",
@@ -155,6 +158,12 @@ def parse_args():
         help="Optional SSH port override for --fetch-via-ssh",
     )
     parser.add_argument(
+        "--ssh-attempts",
+        type=int,
+        default=5,
+        help="Number of SSH policy inventory attempts (1-5) before selecting the best snapshot",
+    )
+    parser.add_argument(
         "--output-json",
         default=None,
         help="Optional output path to save tool result as JSON",
@@ -176,6 +185,7 @@ if __name__ == "__main__":
             args.ssh_user,
             args.ssh_pass,
             args.ssh_port,
+            args.ssh_attempts,
             args.output_json,
         )
     )
